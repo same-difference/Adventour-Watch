@@ -67,6 +67,170 @@ void setup() {
   }
 }
 
+String getUserFirstName(const char* user_id) {
+  String url = SUPABASE_URL_PER;
+  url += "?select=first_name&id=eq.";
+  url += user_id;
+  url += "&limit=1";  // Limit to the first matching row
+
+  HTTPClient http;
+  http.begin(url);
+  http.addHeader("apikey", SUPABASE_ANONKEY);
+  http.addHeader("Authorization", String("Bearer ") + SUPABASE_ANONKEY);
+  
+  int httpCode = http.GET();
+  String firstName = "";
+  if (httpCode > 0) {
+    String payload = http.getString();
+    /*
+    Serial.println("Users payload:");
+    Serial.println(payload);
+    */
+    
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, payload);
+    if (!error) {
+      if (doc.is<JsonArray>()) {
+        JsonArray arr = doc.as<JsonArray>();
+        if (arr.size() > 0) {
+          JsonObject user = arr[0];
+          // Extract the 'first_name' field.
+          if (user["first_name"]) {
+            firstName = user["first_name"].as<const char*>();
+          } else {
+            Serial.println("first_name field missing");
+          }
+        } else {
+          Serial.println("No user found in the array");
+        }
+      } else {
+        Serial.println("Unexpected JSON format for Users payload");
+      }
+    } else {
+      Serial.print("deserializeJson() failed in getUserFirstName: ");
+      Serial.println(error.f_str());
+    }
+  } else {
+    Serial.printf("HTTP GET error: %s\n", http.errorToString(httpCode).c_str());
+  }
+  http.end();
+  return firstName;
+}
+
+String getNextEventSlot(struct tm timeinfo) {
+  int currentMinutes = timeinfo.tm_hour * 60 + timeinfo.tm_min;
+  if (currentMinutes < 600) return "event_1000";     // Before 10:00 AM
+  else if (currentMinutes < 645) return "event_1045";  // 10:00 - 10:44
+  else if (currentMinutes < 690) return "event_1130";  // 10:45 - 11:29
+  else if (currentMinutes < 735) return "event_1215";  // 11:30 - 12:14
+  else if (currentMinutes < 780) return "event_1300";  // 12:15 - 12:59
+  else if (currentMinutes < 825) return "event_1345";  // 1:00 - 1:44
+  else if (currentMinutes < 870) return "event_1430";  // 1:45 - 2:29
+  else if (currentMinutes < 915) return "event_1515";  // 2:30 - 3:14
+  else if (currentMinutes < 960) return "event_1600";  // 3:15 - 3:59
+  else if (currentMinutes < 1005) return "event_1645"; // 4:00 - 4:44
+  else if (currentMinutes < 1050) return "event_1730"; // 4:45 - 5:29
+  else if (currentMinutes < 1095) return "event_1815"; // 5:30 - 6:14
+  else if (currentMinutes < 1140) return "event_1900"; // 6:15 - 6:59
+  else if (currentMinutes < 1185) return "event_1945"; // 7:00 - 7:44
+  else if (currentMinutes < 1230) return "event_2030"; // 7:45 - 8:29
+  else if (currentMinutes < 1275) return "event_2115"; // 8:30 - 9:14
+  else return "";
+}
+
+bool getEventDetails(const JsonObject& eventData, String result[2]) {
+  // Check required fields
+  if (!eventData["id"] || !eventData["type"]) {
+    Serial.println("Event data missing 'id' or 'type'");
+    return false;
+  }
+  
+  const char* event_id = eventData["id"].as<const char*>();
+  const char* event_type = eventData["type"].as<const char*>();
+  
+  String url;
+  String nameField;
+
+  // Choose Supabase endpoint and the appropriate name field for each event type.
+  if (strcmp(event_type, "Shops") == 0) {
+    url = SUPABASE_URL_SHP;
+    url += "?select=shop_name,location&id=eq.";
+    nameField = "shop_name";
+  } else if (strcmp(event_type, "Rides") == 0) {
+    url = SUPABASE_URL_RID;
+    url += "?select=ride_name,location&id=eq.";
+    nameField = "ride_name";
+  } else if (strcmp(event_type, "Dining") == 0) {
+    url = SUPABASE_URL_DIN;
+    url += "?select=dining_name,location&id=eq.";
+    nameField = "dining_name";
+  } else if (strcmp(event_type, "Shows") == 0) {
+    url = SUPABASE_URL_SHW;
+    url += "?select=show_name,location&id=eq.";
+    nameField = "show_name";
+  } else if (strcmp(event_type, "Animals") == 0) {
+    url = SUPABASE_URL_ANI;
+    url += "?select=habitat_name,location&id=eq.";
+    nameField = "habitat_name";
+  } else {
+    Serial.print("Unknown event type: ");
+    Serial.println(event_type);
+    return false;
+  }
+  
+  url += event_id;
+  url += "&limit=1";
+  
+  /*
+  Serial.print("Requesting details with URL: ");
+  Serial.println(url);
+  */
+  
+  HTTPClient http;
+  http.begin(url);
+  http.addHeader("apikey", SUPABASE_ANONKEY);
+  http.addHeader("Authorization", String("Bearer ") + SUPABASE_ANONKEY);
+  
+  int httpCode = http.GET();
+  if (httpCode <= 0) {
+    Serial.printf("HTTP GET error: %s\n", http.errorToString(httpCode).c_str());
+    http.end();
+    return false;
+  }
+  
+  String response = http.getString();
+  http.end();
+  /*
+  Serial.println("Response:");
+  Serial.println(response);
+  */
+  
+  // Parse the JSON response.
+  // Expecting an array with one object.
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, response);
+  if (err) {
+    Serial.print("deserializeJson() failed: ");
+    Serial.println(err.f_str());
+    return false;
+  }
+  
+  JsonArray arr = doc.as<JsonArray>();
+  if (arr.size() == 0) {
+    Serial.println("No details returned");
+    return false;
+  }
+  
+  JsonObject details = arr[0];
+  const char* name = details[nameField.c_str()];
+  const char* location = details["location"];
+  
+  result[0] = (name ? String(name) : "");
+  result[1] = (location ? String(location) : "");
+  
+  return true;
+}
+
 void loop() {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
@@ -81,36 +245,186 @@ void loop() {
 
     if (httpResponseCode > 0) {
       String payload = http.getString();
+      /*
       Serial.println("Supabase payload: ");
       Serial.println(payload);
+      */
 
       JsonDocument doc;
-      
       DeserializationError error = deserializeJson(doc, payload);
+
       if (!error) {
-        // If the response is an array and has at least one object
-        JsonArray arr = doc.as<JsonArray>();
-        if (arr.size() > 0) {
-          // Retrieve a field named "message" from the first object.
-          const char* message = arr[0]["message"];
-          if (message != nullptr) {
-            // Clear a portion of the screen and then display the message.
-            tft.fillScreen(TFT_BLACK);
-            tft.drawString(message, 120, 120);
+        if (doc.is<JsonArray>()) {
+          // IMPORTANT: plans is an array of json objects
+          JsonArray plans = doc.as<JsonArray>();
+          /*
+          Serial.println("Plans: ");
+          serializeJsonPretty(plans, Serial);
+          Serial.println();
+          */
+
+          if (plans.size() > 0) {
+            for (int i = 0; i < plans.size(); i++) {
+              // IMPORTANT: object is a singular row in an array of json objects
+              JsonObject object = plans[i].as<JsonObject>();
+              /*
+              Serial.printf("Object %d: \n", i);
+              serializeJsonPretty(object, Serial);
+              Serial.println();
+              */
+
+              if (object["current_plan"] == true) {
+                const char* user_id = object["user_id"];
+                String first_name = getUserFirstName(user_id);
+                if (first_name != "") {
+                  Serial.println(first_name);
+                }
+                else {
+                  Serial.println("Couldn't find first name");
+                }
+                // always:
+                // get user's name
+                // display current date and time
+                //
+                struct tm timeinfo;
+                bool haveCurrentTime = false;
+                if (getLocalTime(&timeinfo)) {
+                  int hour12 = timeinfo.tm_hour % 12;
+                  if (hour12 == 0) hour12 = 12;
+                  const char* ampm = (timeinfo.tm_hour < 12) ? "AM" : "PM";
+
+                  char dateStr[16];
+                  char timeStr[16];
+
+                  // date formatting
+                  snprintf(dateStr, sizeof(dateStr), "%02d/%02d/%04d", 
+                          timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_year + 1900);
+
+                  // tiem formatting
+                  snprintf(timeStr, sizeof(timeStr), "%02d:%02d %s", 
+                          hour12, timeinfo.tm_min, ampm);
+
+                  Serial.println(dateStr);
+                  Serial.println(timeStr);
+                  haveCurrentTime = true;
+                }
+                else {
+                  Serial.println("Failed to get current time");
+                }
+
+                const String date = object["date"];
+                Serial.print("Plan date: ");
+                Serial.println(date);
+                int date_year = date.substring(0,4).toInt();
+                int date_month = date.substring(5,7).toInt();
+                int date_day = date.substring(8,10).toInt();
+
+                int current_year = 0;
+                int current_month = 0;
+                int current_day = 0;
+
+                enum dateWhen { PAST, TODAY, FUTURE, ERROR };
+                dateWhen planWhen = ERROR;
+
+                String nextEventSlot = "event_1000";
+
+                if (haveCurrentTime) {
+                  current_year = timeinfo.tm_year + 1900;
+                  current_month = timeinfo.tm_mon + 1;
+                  current_day = timeinfo.tm_mday;
+
+                  if (date_year == current_year && date_month == current_month && date_day == current_day) {
+                    Serial.println("The selected plan is for today.");
+                    planWhen = TODAY;
+                  }
+                  else if (date_year >= current_year && date_month >= current_month && date_day >= current_day) {
+                    Serial.println("The selected plan is in the future.");
+                    planWhen = FUTURE;
+                  }
+                  else {
+                    Serial.println("The selected plan is in the past.");
+                    planWhen = PAST;
+                  }
+                  
+                  if (planWhen == PAST) {
+                    nextEventSlot = "event_2115";
+                  }
+                  else if (planWhen == FUTURE) {
+                    nextEventSlot = "event_1000";
+                  }
+                  else {  // else plan is for TODAY
+                    nextEventSlot = getNextEventSlot(timeinfo);
+                  }
+                }
+
+                if (planWhen == ERROR) {
+                  // bla bla blaaaa display error stuff on screen
+                }
+                else if (planWhen == PAST) {
+                  // bla bla bla your trip was X days ago
+                }
+                else if (planWhen == FUTURE) {
+                  // bla bla bla your trip will be in X days
+                }
+                else {  // else plan is for TODAY
+                  // display ride name and location
+                  // calculate the time until event in minutes
+                  JsonObject eventData = object[nextEventSlot.c_str()].as<JsonObject>();
+                  Serial.printf("Next Event Is %s: \n", nextEventSlot);
+                  /*
+                  serializeJsonPretty(eventData, Serial);
+                  Serial.println();
+                  */
+
+                  String eventDetails[2];
+
+                  if (getEventDetails(eventData, eventDetails)) {
+                    Serial.print("Event Name: ");
+                    Serial.println(eventDetails[0]);
+                    Serial.print("Event Location: ");
+                    Serial.println(eventDetails[1]);
+                  } else {
+                    Serial.println("Failed to retrieve event details");
+                  }
+                  
+                  // if nextEventSlot = 10am, choose latest time between 10am and time_start
+                  // while current time < time_end, display time until next event
+                  // if time until < 60 minutes, display number of minutes till
+                  // else display time next event is at
+                }
+
+                // if current date is before plan date, display event_1000 or first populated event_XXXX slot
+                // else do time math to find the next event
+                // display the ride name and location
+                // calculate the time until in minutes
+
+              } else {
+                continue;
+              }
+            }
+
+        /*
+            if (object.containsKey("event_1000")) {
+              JsonObject event1000 = object["event_1000"];
+              // For example, print the "type" within event_1000:
+              if (event1000.containsKey("type")) {
+                const char* eventType = event1000["type"];
+                Serial.print("event_1000 type: ");
+                Serial.println(eventType);
+              } else {
+                Serial.println("event_1000 type missing");
+              }
+            } else {
+              Serial.println("event_1000 missing");
+            }
+*/
           }
-          else {
-            tft.fillScreen(TFT_BLACK);
-            tft.drawString("Field missing", 120, 120);
-          }
-        }
-        else {
-          tft.fillScreen(TFT_BLACK);
-          tft.drawString("No results", 120, 120);
         }
       }
+      
       else {
         Serial.print("JSON parse error: ");
-        Serial.println(error.c_str());
+        Serial.println(error.f_str());
         tft.fillScreen(TFT_BLACK);
         tft.drawString("Parse error", 120, 120);
       }
@@ -128,7 +442,7 @@ void loop() {
     tft.drawString("WiFi disconnected", 120, 120);
   }
   
-  delay(10000);
+  delay(60000);
 
   /*
   struct tm timeinfo;
