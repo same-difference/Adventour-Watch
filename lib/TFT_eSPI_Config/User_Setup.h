@@ -1,4 +1,3 @@
-#warning "✨ Using the one in my own fucking lib folder...."
 #define USER_SETUP_INFO "ESP32-S3-Touch-LCD-1.28"
 
 #define GC9A01_DRIVER
