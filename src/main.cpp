@@ -231,6 +231,20 @@ bool getEventDetails(const JsonObject& eventData, String result[2]) {
   return true;
 }
 
+int minutesUntilSlot(const struct tm &now, const String &slotKey) {
+  // slotKey looks like "event_1000" -> we want the "1000" part
+  String hhmm = slotKey.substring(slotKey.indexOf('_') + 1);  // "1000"
+  if (hhmm.length() != 4) return 0;  // malformed
+  
+  // parse hours/minutes from the four chars
+  int h = (hhmm[0] - '0') * 10 + (hhmm[1] - '0');
+  int m = (hhmm[2] - '0') * 10 + (hhmm[3] - '0');
+  
+  int nowMins   = now.tm_hour * 60 + now.tm_min;
+  int eventMins = h * 60 + m;
+  return eventMins - nowMins;
+}
+
 void loop() {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
@@ -276,6 +290,11 @@ void loop() {
               if (object["current_plan"] == true) {
                 const char* user_id = object["user_id"];
                 String first_name = getUserFirstName(user_id);
+
+                String line_1 = "";
+                String line_2 = "";
+                String line_3 = "";
+                String line_4 = "";
                 if (first_name != "") {
                   Serial.println(first_name);
                 }
@@ -297,19 +316,21 @@ void loop() {
                   char timeStr[16];
 
                   // date formatting
-                  snprintf(dateStr, sizeof(dateStr), "%02d/%02d/%04d", 
-                          timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_year + 1900);
+                  snprintf(dateStr, sizeof(dateStr), "%02d/%02d", 
+                          timeinfo.tm_mon + 1, timeinfo.tm_mday);
 
                   // tiem formatting
-                  snprintf(timeStr, sizeof(timeStr), "%02d:%02d %s", 
+                  snprintf(timeStr, sizeof(timeStr), "%02d:%02d%s", 
                           hour12, timeinfo.tm_min, ampm);
 
                   Serial.println(dateStr);
                   Serial.println(timeStr);
+                  line_1 = first_name + " " + String(dateStr) + " " + String(timeStr);
                   haveCurrentTime = true;
                 }
                 else {
                   Serial.println("Failed to get current time");
+                  line_1 = "unknown time";
                 }
 
                 const String date = object["date"];
@@ -322,6 +343,8 @@ void loop() {
                 int current_year = 0;
                 int current_month = 0;
                 int current_day = 0;
+
+                int day_diff = 0;
 
                 enum dateWhen { PAST, TODAY, FUTURE, ERROR };
                 dateWhen planWhen = ERROR;
@@ -336,14 +359,17 @@ void loop() {
                   if (date_year == current_year && date_month == current_month && date_day == current_day) {
                     Serial.println("The selected plan is for today.");
                     planWhen = TODAY;
+
                   }
                   else if (date_year >= current_year && date_month >= current_month && date_day >= current_day) {
                     Serial.println("The selected plan is in the future.");
                     planWhen = FUTURE;
+                    day_diff = date_day - current_day;
                   }
                   else {
                     Serial.println("The selected plan is in the past.");
                     planWhen = PAST;
+                    day_diff = current_day - date_day;
                   }
                   
                   if (planWhen == PAST) {
@@ -359,16 +385,34 @@ void loop() {
 
                 if (planWhen == ERROR) {
                   // bla bla blaaaa display error stuff on screen
+                  Serial.println("AT Error Code 1: Plan does not have a date set.");
+                  tft.drawString("AT Error Code 1", 120, 120);
                 }
                 else if (planWhen == PAST) {
                   // bla bla bla your trip was X days ago
+                  Serial.printf("Your trip was %d days ago\n", day_diff);
+                  line_2 = "Your Trip Was";
+                  line_3 = String(day_diff) + "days";
+                  line_4 = "ago :(";
+                  
                 }
                 else if (planWhen == FUTURE) {
                   // bla bla bla your trip will be in X days
+                  Serial.printf("Your trip will be in %d days\n", day_diff);
+                  line_2 = "Your Trip Is In";
+                  line_3 = String(day_diff) + "days";
+                  line_4 = "woohoo!";
                 }
                 else {  // else plan is for TODAY
                   // display ride name and location
                   // calculate the time until event in minutes
+                  // Compute how many minutes until that next slot:
+                  int minsToNext = minutesUntilSlot(timeinfo, nextEventSlot);
+                  Serial.printf("Minutes until %s: %d\n", nextEventSlot.c_str(), minsToNext);
+
+                  // Now display it however you like:
+                  // e.g. if you got your eventDetails already:
+
                   JsonObject eventData = object[nextEventSlot.c_str()].as<JsonObject>();
                   Serial.printf("Next Event Is %s: \n", nextEventSlot);
                   /*
@@ -383,8 +427,13 @@ void loop() {
                     Serial.println(eventDetails[0]);
                     Serial.print("Event Location: ");
                     Serial.println(eventDetails[1]);
+
+                    line_2 = String(eventDetails[0]);
+                    line_3 = String(abs(minsToNext) + " minutes");
+                    line_4 = "in " + eventDetails[1];
                   } else {
-                    Serial.println("Failed to retrieve event details");
+                    Serial.println("AT Error Code 2: Failed to retrieve event details");
+                    tft.drawString("AT Error Code 2", 120, 120);
                   }
                   
                   // if nextEventSlot = 10am, choose latest time between 10am and time_start
@@ -398,6 +447,14 @@ void loop() {
                 // display the ride name and location
                 // calculate the time until in minutes
 
+                tft.setTextSize(1);
+                tft.drawString(line_1, 120, 50);
+                tft.setTextSize(3);
+                tft.drawString(line_2, 120, 70);
+                tft.setTextSize(5);
+                tft.drawString(line_3, 120, 90);
+                tft.setTextSize(3);
+                tft.drawString(line_4, 120, 110);
               } else {
                 continue;
               }
